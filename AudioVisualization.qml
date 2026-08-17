@@ -13,8 +13,8 @@ Item {
     readonly property bool isPlaying: activePlayer !== null && activePlayer.playbackState === MprisPlaybackState.Playing
     readonly property bool live: visible && isPlaying
 
-    width: Math.max(64, barCount * 3.5)
-    height: Theme.iconSize
+    implicitWidth: Math.max(64, barCount * 4)
+    implicitHeight: Theme.iconSize
 
     readonly property real maxBarHeight: Theme.iconSize
     readonly property real minBarHeight: 3
