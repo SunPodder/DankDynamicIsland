@@ -1,0 +1,13 @@
+{
+    "id": "DankDynamicIsland",
+    "name": "Dynamic Island",
+    "description": "Dynamic Island for Dank Material Shell",
+    "version": "0.1.0",
+    "author": "SunPodder",
+    "type": "widget",
+    "capabilities": ["dankbar-widget"],
+    "component": "./DynamicIsland.qml",
+    "icon": "widgets",
+    "settings": "./DynamicIslandSettings.qml",
+    "permissions": ["settings_read", "settings_write"]
+}
