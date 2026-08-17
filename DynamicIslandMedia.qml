@@ -12,6 +12,8 @@ Item {
     property color islandBackgroundColor: "#0b0b0b"
     property color islandTextColor: "#f5f5f5"
     property real barThickness: 48
+    property int compactBarCount: 15
+    property int extendedBarCount: 16
 
     readonly property MprisPlayer activePlayer: MprisController.activePlayer
     readonly property bool hoverPreview: MprisController.isFirefoxYoutubeHoverPreview(activePlayer)
@@ -154,7 +156,7 @@ Item {
                 AudioVisualization {
                     id: audioViz
                     anchors.fill: parent
-                    barCount: 15
+                    barCount: root.compactBarCount
                     color: root.islandTextColor
                     visible: root.isPlaying
                 }
@@ -349,7 +351,7 @@ Item {
 
                     AudioVisualization {
                         anchors.fill: parent
-                        barCount: 16
+                        barCount: root.extendedBarCount
                         color: root.islandTextColor
                         visible: root.isPlaying
                     }
