@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Common
 import qs.Services
 import qs.Modules.Plugins
 
@@ -7,8 +8,15 @@ pragma ComponentBehavior: Bound
 PluginComponent {
     id: root
 
-    readonly property color islandBackgroundColor: "#0b0b0b"
-    readonly property color islandTextColor: "#f5f5f5"
+    readonly property bool inheritTheme: pluginData?.inheritTheme ?? false
+    readonly property color islandBackgroundColor: inheritTheme
+        ? Theme.surfaceContainerHigh
+        : (pluginData?.backgroundColor || "#0b0b0b")
+    readonly property color islandTextColor: inheritTheme
+        ? Theme.surfaceText
+        : (pluginData?.foregroundColor || "#f5f5f5")
+    readonly property int compactBarCount: pluginData?.compactBarCount ?? 15
+    readonly property int extendedBarCount: pluginData?.extendedBarCount ?? 16
 
     BasePill {
         id: islandPill
@@ -32,12 +40,17 @@ PluginComponent {
                     onLoaded: {
                         if (!item)
                             return;
-                        item.islandBackgroundColor = root.islandBackgroundColor;
-                        item.islandTextColor = root.islandTextColor;
+                        item.islandBackgroundColor = Qt.binding(() => root.islandBackgroundColor);
+                        item.islandTextColor = Qt.binding(() => root.islandTextColor);
                         item.barThickness = islandPill.barThickness;
+                        if ("compactBarCount" in item)
+                            item.compactBarCount = Qt.binding(() => root.compactBarCount);
+                        if ("extendedBarCount" in item)
+                            item.extendedBarCount = Qt.binding(() => root.extendedBarCount);
                     }
                 }
             }
         }
     }
 }
+
