@@ -24,6 +24,13 @@ PluginSettings {
     }
 
     ToggleSetting {
+        settingKey: "enableLyrics"
+        label: "Real-time Synced Lyrics"
+        description: "Fetch and display synchronized lyrics from LRCLIB when media is playing"
+        defaultValue: true
+    }
+
+    ToggleSetting {
         settingKey: "inheritTheme"
         label: "Inherit Theme Colors"
         description: "Use system theme colors instead of custom background and foreground colors"

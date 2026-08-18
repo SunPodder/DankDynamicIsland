@@ -16,25 +16,34 @@ Item {
     property int extendedBarCount: 16
     property real parentWidgetWidth: 380
     property real parentWidgetHeight: 180
+    property var islandService: null
 
+    // Fallback to MprisController if islandService is not yet injected
     readonly property MprisPlayer activePlayer: MprisController.activePlayer
     readonly property bool hoverPreview: MprisController.isFirefoxYoutubeHoverPreview(activePlayer)
-    readonly property bool isPlaying: !!activePlayer && activePlayer.playbackState === 1 && !hoverPreview
-    readonly property string cachedIdentity: activePlayer ? (activePlayer.identity || "") : ""
+    readonly property bool isPlaying: islandService ? islandService.isPlaying : (!!activePlayer && activePlayer.playbackState === 1 && !hoverPreview)
+
+    readonly property string cachedIdentity: (islandService && islandService.playerIdentity) ? islandService.playerIdentity : (activePlayer ? (activePlayer.identity || "") : "")
     readonly property string lowerIdentity: cachedIdentity.toLowerCase()
     readonly property bool isWebMedia: lowerIdentity.includes("firefox") || lowerIdentity.includes("chrome") || lowerIdentity.includes("chromium") || lowerIdentity.includes("edge") || lowerIdentity.includes("safari")
-    readonly property string displayText: {
-        if (!activePlayer)
-            return "";
-        const title = String(MprisController.stableTitle || activePlayer.trackTitle || "");
-        const subtitle = isWebMedia ? String(MprisController.stableArtist || cachedIdentity) : String(MprisController.stableArtist || activePlayer.trackArtist || "");
-        const combined = subtitle.length > 0 ? `${title} • ${subtitle}` : title;
+
+    readonly property string trackTitle: (islandService && islandService.title) ? islandService.title : String(MprisController.stableTitle || (activePlayer ? activePlayer.trackTitle : "") || "Playing")
+    readonly property string trackArtist: (islandService && islandService.artist) ? islandService.artist : String(MprisController.stableArtist || (activePlayer ? activePlayer.trackArtist : "") || (isWebMedia ? cachedIdentity : ""))
+
+    readonly property bool hasLyrics: (islandService && islandService.hasLyrics && islandService.lyricsEnabled) ?? false
+    readonly property string currentLyric: (islandService && islandService.currentLyric) ? islandService.currentLyric : ""
+    readonly property bool showLyrics: hasLyrics && currentLyric.length > 0 && root.isPlaying
+
+    readonly property string defaultDisplayText: {
+        const title = root.trackTitle;
+        const subtitle = isWebMedia ? (root.trackArtist || cachedIdentity) : root.trackArtist;
+        const combined = (subtitle.length > 0 && subtitle !== title) ? `${title} • ${subtitle}` : title;
         return combined.length > 0 ? combined : "Playing";
     }
-    readonly property string trackTitle: String(MprisController.stableTitle || (activePlayer ? activePlayer.trackTitle : "") || "Playing")
-    readonly property string trackArtist: String(MprisController.stableArtist || (activePlayer ? activePlayer.trackArtist : "") || (isWebMedia ? cachedIdentity : ""))
 
-    readonly property int fontSize: Theme.barTextSize(root.barThickness, undefined, undefined)
+    readonly property string compactDisplayText: root.showLyrics ? root.currentLyric : root.defaultDisplayText
+
+    readonly property int fontSize: Theme.barTextSize(root.barThickness, 1.15, undefined)
     readonly property int maxTextWidth: {
         switch (SettingsData.mediaSize) {
         case 2:
@@ -49,13 +58,47 @@ Item {
     property bool isExpanded: false
     property real expandProgress: 0.0
 
-    readonly property real compactWidth: IslandLayout.calculateCompactWidth(mediaRow.implicitWidth, Theme.spacingL * 2, 160, 320)
-    readonly property real compactHeight: root.barThickness
-    readonly property var expandedDims: IslandLayout.calculateExpandedDimensions(root.parentWidgetWidth, root.parentWidgetHeight, 360, 170)
-    readonly property real expandedWidth: Math.max(expandedDims.width, compactWidth + 60)
-    readonly property real expandedHeight: expandedDims.height
+    readonly property real iconWidth: 20
+    readonly property real rowSpacing: Theme.spacingS
+    readonly property real horizontalPadding: Theme.spacingL * 2
 
-    readonly property real currentWidth: IslandLayout.lerp(compactWidth, expandedWidth, expandProgress)
+    // Maximum text width permitted by the actual outer parent widget bounds
+    readonly property real maxAllowedTextWidth: Math.max(40, root.parentWidgetWidth - (iconWidth + rowSpacing + horizontalPadding))
+
+    TextMetrics {
+        id: lyricMetrics
+        font.pixelSize: root.fontSize
+        font.weight: root.showLyrics ? Font.Medium : Font.Normal
+        text: root.compactDisplayText
+    }
+
+    readonly property real measuredTextWidth: Math.ceil(lyricMetrics.width)
+
+    function getDesiredTextWidth() {
+        if (root.showLyrics) {
+            return Math.min(measuredTextWidth, maxAllowedTextWidth);
+        } else {
+            return Math.min(measuredTextWidth, Math.min(root.maxTextWidth, maxAllowedTextWidth));
+        }
+    }
+
+    readonly property real desiredRowWidth: iconWidth + rowSpacing + getDesiredTextWidth()
+    readonly property real compactWidth: Math.max(160, Math.min(root.parentWidgetWidth, desiredRowWidth + horizontalPadding))
+
+    readonly property real compactHeight: root.barThickness
+    readonly property var expandedDims: IslandLayout.calculateExpandedDimensions(root.parentWidgetWidth, root.parentWidgetHeight, 360, 176)
+    readonly property real expandedWidth: Math.max(expandedDims.width, 360)
+    readonly property real expandedHeight: Math.max(expandedDims.height, expandedContent.implicitHeight + Theme.spacingM * 2)
+
+    property real animatedCompactWidth: compactWidth
+    Behavior on animatedCompactWidth {
+        NumberAnimation {
+            duration: 220
+            easing.type: Easing.OutCubic
+        }
+    }
+
+    readonly property real currentWidth: IslandLayout.lerp(root.animatedCompactWidth, expandedWidth, expandProgress)
     readonly property real currentHeight: IslandLayout.lerp(compactHeight, expandedHeight, expandProgress)
     readonly property real currentRadius: IslandLayout.interpolateRadius(compactHeight / 2, 24, expandProgress)
 
@@ -145,18 +188,20 @@ Item {
             id: compactContent
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: parent.top
-            width: root.compactWidth
+            width: root.animatedCompactWidth
             height: root.compactHeight
+            clip: true
             opacity: IslandLayout.calcCompactOpacity(root.expandProgress)
             visible: opacity > 0
 
             Row {
                 id: mediaRow
+                width: root.desiredRowWidth
                 anchors.centerIn: parent
-                spacing: Theme.spacingS
+                spacing: root.rowSpacing
 
                 Item {
-                    width: root.isPlaying ? audioViz.width : 20
+                    width: root.iconWidth
                     height: 20
                     anchors.verticalCenter: parent.verticalCenter
 
@@ -180,23 +225,29 @@ Item {
                 Item {
                     id: textContainer
                     anchors.verticalCenter: parent.verticalCenter
-                    width: textLabel.implicitWidth > root.maxTextWidth ? root.maxTextWidth : textLabel.implicitWidth
-                    height: root.fontSize
-                    clip: true
-                    visible: root.displayText.length > 0
+                    width: root.getDesiredTextWidth()
+                    height: Math.max(root.fontSize + 4, lyricMetrics.height)
+                    clip: !root.showLyrics
+                    visible: root.compactDisplayText.length > 0
 
                     StyledText {
                         id: textLabel
                         anchors.verticalCenter: parent.verticalCenter
-                        text: root.displayText
+                        anchors.left: scrollActive ? undefined : parent.left
+                        anchors.right: scrollActive ? undefined : parent.right
+                        width: scrollActive ? implicitWidth : undefined
+                        text: root.compactDisplayText
                         font.pixelSize: root.fontSize
+                        font.weight: root.showLyrics ? Font.Medium : Font.Normal
                         color: root.islandTextColor
                         horizontalAlignment: Text.AlignLeft
                         verticalAlignment: Text.AlignVCenter
                         wrapMode: Text.NoWrap
+                        elide: scrollActive ? Text.ElideNone : ((root.measuredTextWidth > textContainer.width) ? Text.ElideRight : Text.ElideNone)
                         x: 0
 
-                        readonly property bool scrollActive: root.isPlaying && visible && root.displayText.length > 0 && Window.window?.visible !== false && implicitWidth > textContainer.width && SettingsData.scrollTitleEnabled && !root.isExpanded
+                        // Only scroll/morph title if NOT showing lyrics
+                        readonly property bool scrollActive: !root.showLyrics && root.isPlaying && visible && text.length > 0 && Window.window?.visible !== false && implicitWidth > textContainer.width && SettingsData.scrollTitleEnabled && !root.isExpanded
                         readonly property real scrollDistance: Math.max(0, implicitWidth - textContainer.width + Theme.spacingS)
 
                         onTextChanged: {
@@ -247,7 +298,9 @@ Item {
         // Expanded Card Content View
         Column {
             id: expandedContent
-            anchors.fill: parent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
             anchors.margins: Theme.spacingM
             spacing: Theme.spacingXS
             opacity: IslandLayout.calcExpandedOpacity(root.expandProgress)
@@ -298,6 +351,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
 
                     AudioVisualization {
+                        id: expandedAudioViz
                         anchors.fill: parent
                         barCount: root.extendedBarCount
                         color: root.islandTextColor
@@ -311,7 +365,7 @@ Item {
                 height: 2
             }
 
-            // Track Information
+            // Track Information & Live Lyric
             Column {
                 width: parent.width
                 spacing: 2
@@ -335,6 +389,19 @@ Item {
                     horizontalAlignment: Text.AlignLeft
                     visible: text.length > 0
                 }
+
+                StyledText {
+                    width: parent.width
+                    text: root.currentLyric
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.italic: true
+                    color: Theme.primary
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignLeft
+                    visible: root.showLyrics
+                }
             }
 
             Item {
@@ -354,7 +421,7 @@ Item {
                     radius: 18
                     anchors.verticalCenter: parent.verticalCenter
                     color: prevBtnMouse.containsMouse ? Theme.withAlpha(root.islandTextColor, 0.25) : Theme.withAlpha(root.islandTextColor, 0.12)
-                    opacity: (root.activePlayer && root.activePlayer.canGoPrevious) ? 1.0 : 0.4
+                    opacity: (islandService ? islandService.canGoPrevious : (root.activePlayer && root.activePlayer.canGoPrevious)) ? 1.0 : 0.4
 
                     DankIcon {
                         anchors.centerIn: parent
@@ -371,7 +438,9 @@ Item {
                         onEntered: collapseTimer.stop()
                         onExited: collapseTimer.restart()
                         onClicked: {
-                            if (root.activePlayer) {
+                            if (root.islandService) {
+                                root.islandService.previous();
+                            } else if (root.activePlayer) {
                                 MprisController.previousOrRewind();
                             }
                         }
@@ -401,7 +470,9 @@ Item {
                         onEntered: collapseTimer.stop()
                         onExited: collapseTimer.restart()
                         onClicked: {
-                            if (root.activePlayer) {
+                            if (root.islandService) {
+                                root.islandService.togglePlay();
+                            } else if (root.activePlayer) {
                                 root.activePlayer.togglePlaying();
                             }
                         }
@@ -415,7 +486,7 @@ Item {
                     radius: 18
                     anchors.verticalCenter: parent.verticalCenter
                     color: nextBtnMouse.containsMouse ? Theme.withAlpha(root.islandTextColor, 0.25) : Theme.withAlpha(root.islandTextColor, 0.12)
-                    opacity: (root.activePlayer && root.activePlayer.canGoNext) ? 1.0 : 0.4
+                    opacity: (islandService ? islandService.canGoNext : (root.activePlayer && root.activePlayer.canGoNext)) ? 1.0 : 0.4
 
                     DankIcon {
                         anchors.centerIn: parent
@@ -432,7 +503,9 @@ Item {
                         onEntered: collapseTimer.stop()
                         onExited: collapseTimer.restart()
                         onClicked: {
-                            if (root.activePlayer) {
+                            if (root.islandService) {
+                                root.islandService.next();
+                            } else if (root.activePlayer) {
                                 MprisController.next();
                             }
                         }

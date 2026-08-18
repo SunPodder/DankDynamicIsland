@@ -1,13 +1,16 @@
 {
     "id": "DankDynamicIsland",
     "name": "Dynamic Island",
-    "description": "Dynamic Island for Dank Material Shell",
-    "version": "0.1.0",
+    "description": "Dynamic Island with synced lyrics for Dank Material Shell",
+    "version": "0.2.0",
     "author": "SunPodder",
-    "type": "desktop",
-    "capabilities": ["desktop-widget"],
-    "component": "./DynamicIsland.qml",
+    "type": "composite",
+    "capabilities": ["desktop-widget", "daemon"],
+    "components": {
+        "desktop": "./DynamicIsland.qml",
+        "daemon": "./DynamicIslandDaemon.qml"
+    },
     "icon": "widgets",
     "settings": "./DynamicIslandSettings.qml",
-    "permissions": ["settings_read", "settings_write"]
+    "permissions": ["settings_read", "settings_write", "process", "network"]
 }
