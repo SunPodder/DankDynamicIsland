@@ -1,10 +1,10 @@
 import QtQuick
 import Quickshell
-import Quickshell.Wayland
 import Quickshell.Services.Mpris
 import qs.Common
 import qs.Services
 import qs.Widgets
+import "IslandLayout.js" as IslandLayout
 
 Item {
     id: root
@@ -14,6 +14,8 @@ Item {
     property real barThickness: 48
     property int compactBarCount: 15
     property int extendedBarCount: 16
+    property real parentWidgetWidth: 380
+    property real parentWidgetHeight: 180
 
     readonly property MprisPlayer activePlayer: MprisController.activePlayer
     readonly property bool hoverPreview: MprisController.isFirefoxYoutubeHoverPreview(activePlayer)
@@ -44,46 +46,49 @@ Item {
         }
     }
 
-    property bool shouldBeOpen: false
+    property bool isExpanded: false
     property real expandProgress: 0.0
 
+    readonly property real compactWidth: IslandLayout.calculateCompactWidth(mediaRow.implicitWidth, Theme.spacingL * 2, 160, 320)
+    readonly property real compactHeight: root.barThickness
+    readonly property var expandedDims: IslandLayout.calculateExpandedDimensions(root.parentWidgetWidth, root.parentWidgetHeight, 360, 170)
+    readonly property real expandedWidth: Math.max(expandedDims.width, compactWidth + 60)
+    readonly property real expandedHeight: expandedDims.height
+
+    readonly property real currentWidth: IslandLayout.lerp(compactWidth, expandedWidth, expandProgress)
+    readonly property real currentHeight: IslandLayout.lerp(compactHeight, expandedHeight, expandProgress)
+    readonly property real currentRadius: IslandLayout.interpolateRadius(compactHeight / 2, 24, expandProgress)
+
+    implicitWidth: Math.round(currentWidth)
+    implicitHeight: Math.round(currentHeight)
+
     onIsPlayingChanged: {
-        if (!isPlaying && popupOverlay.visible) {
-            closePopup();
+        if (!isPlaying && isExpanded) {
+            collapseIsland();
         }
     }
 
-    function openPopup() {
+    function expandIsland() {
         if (!isPlaying)
             return;
-        const win = root.Window.window;
-        if (!win)
-            return;
-        const globalPos = compactContainer.mapToItem(null, 0, 0);
-        popupOverlay.targetScreen = win.screen;
-        popupOverlay.targetX = (win.x || 0) + globalPos.x;
-        popupOverlay.targetY = (win.y || 0) + globalPos.y;
-        popupOverlay.compactWidth = compactContainer.width;
-        popupOverlay.compactHeight = root.barThickness;
-        popupOverlay.visible = true;
-        shouldBeOpen = true;
+        isExpanded = true;
         collapseAnim.stop();
         expandAnim.restart();
     }
 
-    function closePopup() {
-        shouldBeOpen = false;
+    function collapseIsland() {
+        isExpanded = false;
         expandAnim.stop();
         collapseAnim.restart();
     }
 
     Timer {
         id: collapseTimer
-        interval: 150
+        interval: 180
         repeat: false
         onTriggered: {
-            if (!compactHover.containsMouse && !popupHover.containsMouse && !prevBtnMouse.containsMouse && !playBtnMouse.containsMouse && !nextBtnMouse.containsMouse) {
-                root.closePopup();
+            if (!islandHoverArea.containsMouse && !prevBtnMouse.containsMouse && !playBtnMouse.containsMouse && !nextBtnMouse.containsMouse) {
+                root.collapseIsland();
             }
         }
     }
@@ -105,37 +110,29 @@ Item {
         to: 0.0
         duration: 250
         easing.type: Easing.OutCubic
-        onFinished: {
-            if (!root.shouldBeOpen && root.expandProgress === 0.0) {
-                popupOverlay.visible = false;
-            }
-        }
     }
 
-    implicitWidth: compactContainer.implicitWidth
-    implicitHeight: compactContainer.implicitHeight
-
-    // In-bar Compact Container
-    Item {
-        id: compactContainer
-        implicitWidth: mediaRow.implicitWidth + Theme.spacingL * 2
-        implicitHeight: Math.max(mediaRow.implicitHeight, root.fontSize) + Theme.spacingS * 2
-        anchors.centerIn: parent
-
-        Rectangle {
-            anchors.fill: parent
-            radius: height / 2
-            color: root.islandBackgroundColor
-        }
+    // Dynamic Island Surface
+    Rectangle {
+        id: islandCard
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.round(root.currentWidth)
+        height: Math.round(root.currentHeight)
+        radius: root.currentRadius
+        color: root.islandBackgroundColor
+        border.color: Theme.withAlpha(root.islandTextColor, 0.12 * root.expandProgress)
+        border.width: root.expandProgress > 0.05 ? 1 : 0
+        clip: true
 
         MouseArea {
-            id: compactHover
+            id: islandHoverArea
             anchors.fill: parent
             hoverEnabled: true
             onEntered: {
                 if (root.isPlaying) {
                     collapseTimer.stop();
-                    root.openPopup();
+                    root.expandIsland();
                 }
             }
             onExited: {
@@ -143,171 +140,124 @@ Item {
             }
         }
 
-        Row {
-            id: mediaRow
-            anchors.centerIn: parent
-            spacing: Theme.spacingS
+        // Compact Pill Content View
+        Item {
+            id: compactContent
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            width: root.compactWidth
+            height: root.compactHeight
+            opacity: IslandLayout.calcCompactOpacity(root.expandProgress)
+            visible: opacity > 0
 
-            Item {
-                width: root.isPlaying ? audioViz.width : 20
-                height: 20
-                anchors.verticalCenter: parent.verticalCenter
+            Row {
+                id: mediaRow
+                anchors.centerIn: parent
+                spacing: Theme.spacingS
 
-                AudioVisualization {
-                    id: audioViz
-                    anchors.fill: parent
-                    barCount: root.compactBarCount
-                    color: root.islandTextColor
-                    visible: root.isPlaying
-                }
-
-                DankIcon {
-                    anchors.centerIn: parent
-                    name: "music_note"
-                    size: 20
-                    color: root.islandTextColor
-                    visible: !root.isPlaying
-                }
-            }
-
-            Item {
-                id: textContainer
-                anchors.verticalCenter: parent.verticalCenter
-                width: textLabel.implicitWidth > root.maxTextWidth ? root.maxTextWidth : textLabel.implicitWidth
-                height: root.fontSize
-                clip: true
-                visible: root.displayText.length > 0
-
-                StyledText {
-                    id: textLabel
+                Item {
+                    width: root.isPlaying ? audioViz.width : 20
+                    height: 20
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.displayText
-                    font.pixelSize: root.fontSize
-                    color: root.islandTextColor
-                    horizontalAlignment: Text.AlignLeft
-                    verticalAlignment: Text.AlignVCenter
-                    wrapMode: Text.NoWrap
-                    x: 0
 
-                    readonly property bool scrollActive: root.isPlaying && visible && root.displayText.length > 0 && Window.window?.visible !== false && implicitWidth > textContainer.width && SettingsData.scrollTitleEnabled && !popupOverlay.visible
-                    readonly property real scrollDistance: Math.max(0, implicitWidth - textContainer.width + Theme.spacingS)
-
-                    onTextChanged: {
-                        x = 0;
-                        if (scrollActive)
-                            scrollAnimation.restart();
+                    AudioVisualization {
+                        id: audioViz
+                        anchors.fill: parent
+                        barCount: root.compactBarCount
+                        color: root.islandTextColor
+                        visible: root.isPlaying
                     }
 
-                    onScrollActiveChanged: {
-                        if (!scrollActive)
+                    DankIcon {
+                        anchors.centerIn: parent
+                        name: "music_note"
+                        size: 20
+                        color: root.islandTextColor
+                        visible: !root.isPlaying
+                    }
+                }
+
+                Item {
+                    id: textContainer
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: textLabel.implicitWidth > root.maxTextWidth ? root.maxTextWidth : textLabel.implicitWidth
+                    height: root.fontSize
+                    clip: true
+                    visible: root.displayText.length > 0
+
+                    StyledText {
+                        id: textLabel
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.displayText
+                        font.pixelSize: root.fontSize
+                        color: root.islandTextColor
+                        horizontalAlignment: Text.AlignLeft
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.NoWrap
+                        x: 0
+
+                        readonly property bool scrollActive: root.isPlaying && visible && root.displayText.length > 0 && Window.window?.visible !== false && implicitWidth > textContainer.width && SettingsData.scrollTitleEnabled && !root.isExpanded
+                        readonly property real scrollDistance: Math.max(0, implicitWidth - textContainer.width + Theme.spacingS)
+
+                        onTextChanged: {
                             x = 0;
-                    }
-
-                    SequentialAnimation {
-                        id: scrollAnimation
-                        running: textLabel.scrollActive
-                        loops: Animation.Infinite
-
-                        PauseAnimation {
-                            duration: 1200
+                            if (scrollActive)
+                                scrollAnimation.restart();
                         }
 
-                        NumberAnimation {
-                            target: textLabel
-                            property: "x"
-                            to: -textLabel.scrollDistance
-                            duration: Math.max(1200, Math.min(5000, textLabel.scrollDistance * 18))
-                            easing.type: Easing.InOutQuad
+                        onScrollActiveChanged: {
+                            if (!scrollActive)
+                                x = 0;
                         }
 
-                        PauseAnimation {
-                            duration: 1200
-                        }
+                        SequentialAnimation {
+                            id: scrollAnimation
+                            running: textLabel.scrollActive
+                            loops: Animation.Infinite
 
-                        NumberAnimation {
-                            target: textLabel
-                            property: "x"
-                            to: 0
-                            duration: Math.max(1200, Math.min(5000, textLabel.scrollDistance * 18))
-                            easing.type: Easing.InOutQuad
+                            PauseAnimation {
+                                duration: 1200
+                            }
+
+                            NumberAnimation {
+                                target: textLabel
+                                property: "x"
+                                to: -textLabel.scrollDistance
+                                duration: Math.max(1200, Math.min(5000, textLabel.scrollDistance * 18))
+                                easing.type: Easing.InOutQuad
+                            }
+
+                            PauseAnimation {
+                                duration: 1200
+                            }
+
+                            NumberAnimation {
+                                target: textLabel
+                                property: "x"
+                                to: 0
+                                duration: Math.max(1200, Math.min(5000, textLabel.scrollDistance * 18))
+                                easing.type: Easing.InOutQuad
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    // Wayland Overlay Layer Shell Popup Window (Smooth integrated extension)
-    PanelWindow {
-        id: popupOverlay
-
-        property var targetScreen: null
-        property real targetX: 0
-        property real targetY: 0
-        property real compactWidth: 160
-        property real compactHeight: 48
-
-        readonly property real expandedWidth: Math.max(340, compactWidth + 60)
-        readonly property real expandedHeight: 170
-
-        readonly property real currentWidth: compactWidth + (expandedWidth - compactWidth) * root.expandProgress
-        readonly property real currentHeight: compactHeight + (expandedHeight - compactHeight) * root.expandProgress
-
-        WlrLayershell.layer: WlrLayershell.Overlay
-        WlrLayershell.namespace: "dms:dynamic-island-popup"
-        color: "transparent"
-        visible: false
-        screen: targetScreen
-
-        anchors {
-            top: true
-            left: true
-        }
-
-        margins {
-            left: Math.round(targetX + (compactWidth / 2) - (currentWidth / 2))
-            top: Math.round(targetY)
-        }
-
-        implicitWidth: Math.ceil(currentWidth)
-        implicitHeight: Math.ceil(currentHeight)
-
-        MouseArea {
-            id: popupHover
-            anchors.fill: parent
-            hoverEnabled: true
-            onEntered: {
-                collapseTimer.stop();
-            }
-            onExited: {
-                collapseTimer.restart();
-            }
-        }
-
-        // Animated Island Card Background
-        Rectangle {
-            anchors.fill: parent
-            radius: (popupOverlay.compactHeight / 2) * (1.0 - root.expandProgress) + 24 * root.expandProgress
-            color: root.islandBackgroundColor
-            border.color: Theme.withAlpha(root.islandTextColor, 0.12 * root.expandProgress)
-            border.width: root.expandProgress > 0.05 ? 1 : 0
-        }
-
-        // Expanded Island Content Card (Only rendered content in popout)
+        // Expanded Card Content View
         Column {
-            id: popupExpandedLayout
+            id: expandedContent
             anchors.fill: parent
             anchors.margins: Theme.spacingM
             spacing: Theme.spacingXS
-            opacity: Math.max(0, (root.expandProgress - 0.15) / 0.85)
+            opacity: IslandLayout.calcExpandedOpacity(root.expandProgress)
             visible: opacity > 0
 
-            // Header Row
+            // Header Row (App Badge + Identity + Equalizer)
             Row {
                 width: parent.width
                 height: 24
 
-                // App / Player Icon Badge
                 Rectangle {
                     width: 24
                     height: 24
@@ -323,7 +273,6 @@ Item {
                     }
                 }
 
-                // Player Identity Name
                 Item {
                     width: parent.width - 24 - expandedVizContainer.width - Theme.spacingS * 2
                     height: parent.height
@@ -342,7 +291,6 @@ Item {
                     }
                 }
 
-                // Equalizer Bars
                 Item {
                     id: expandedVizContainer
                     width: 64
@@ -363,7 +311,7 @@ Item {
                 height: 2
             }
 
-            // Track Info Section
+            // Track Information
             Column {
                 width: parent.width
                 spacing: 2
@@ -394,7 +342,7 @@ Item {
                 height: 4
             }
 
-            // Media Controls Row
+            // Media Controls (Previous, Play/Pause, Next)
             Row {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Theme.spacingL
@@ -420,12 +368,8 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onEntered: {
-                            collapseTimer.stop();
-                        }
-                        onExited: {
-                            collapseTimer.restart();
-                        }
+                        onEntered: collapseTimer.stop()
+                        onExited: collapseTimer.restart()
                         onClicked: {
                             if (root.activePlayer) {
                                 MprisController.previousOrRewind();
@@ -454,12 +398,8 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onEntered: {
-                            collapseTimer.stop();
-                        }
-                        onExited: {
-                            collapseTimer.restart();
-                        }
+                        onEntered: collapseTimer.stop()
+                        onExited: collapseTimer.restart()
                         onClicked: {
                             if (root.activePlayer) {
                                 root.activePlayer.togglePlaying();
@@ -489,12 +429,8 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onEntered: {
-                            collapseTimer.stop();
-                        }
-                        onExited: {
-                            collapseTimer.restart();
-                        }
+                        onEntered: collapseTimer.stop()
+                        onExited: collapseTimer.restart()
                         onClicked: {
                             if (root.activePlayer) {
                                 MprisController.next();

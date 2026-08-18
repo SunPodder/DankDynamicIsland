@@ -10,9 +10,11 @@ Item {
     property color islandBackgroundColor: "#0b0b0b"
     property color islandTextColor: "#f5f5f5"
     property real barThickness: 48
+    property real parentWidgetWidth: 380
+    property real parentWidgetHeight: 180
 
-    implicitWidth: islandRow.implicitWidth + Theme.spacingL * 2
-    implicitHeight: Math.max(islandRow.implicitHeight, Theme.barTextSize(barThickness, undefined, undefined)) + Theme.spacingS * 2
+    implicitWidth: islandCard.width
+    implicitHeight: islandCard.height
 
     readonly property real fontSize: Theme.barTextSize(barThickness, undefined, undefined)
     readonly property string clockText: {
@@ -35,22 +37,26 @@ Item {
     }
 
     Rectangle {
-        anchors.fill: parent
+        id: islandCard
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: islandRow.implicitWidth + Theme.spacingL * 2
+        height: Math.max(islandRow.implicitHeight, root.fontSize) + Theme.spacingS * 2
         radius: height / 2
         color: root.islandBackgroundColor
-    }
 
-    Row {
-        id: islandRow
-        anchors.centerIn: parent
-        spacing: Theme.spacingS
+        Row {
+            id: islandRow
+            anchors.centerIn: parent
+            spacing: Theme.spacingS
 
-        StyledText {
-            text: root.clockText
-            font.pixelSize: root.fontSize
-            color: root.islandTextColor
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+            StyledText {
+                text: root.clockText
+                font.pixelSize: root.fontSize
+                color: root.islandTextColor
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
         }
     }
 
