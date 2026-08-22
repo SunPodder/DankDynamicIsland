@@ -77,6 +77,11 @@ func (a *DaemonApp) handleClientAction(msg ClientMessage) {
 		_ = a.mpris.Next()
 	case "previous":
 		_ = a.mpris.Previous()
+	case "seek":
+		if err := a.mpris.SeekTo(msg.PositionMs); err != nil {
+			log.Printf("[Daemon] Seek to %dms failed: %v", msg.PositionMs, err)
+		}
+		a.broadcastCurrentState()
 	case "set_lyrics_enabled":
 		if msg.Enabled != nil {
 			a.mu.Lock()
@@ -183,6 +188,7 @@ func (a *DaemonApp) tick() {
 func (a *DaemonApp) buildState() MediaState {
 	activeBus, identity, status, title, artist, album, artURL, canNext, canPrev, canPlay, canPause := a.mpris.GetMediaInfo()
 	posMs := a.mpris.GetPositionMs()
+	canSeek := a.mpris.GetCanSeek()
 	durMs := a.mpris.GetDurationMs()
 
 	a.mu.RLock()
@@ -219,6 +225,7 @@ func (a *DaemonApp) buildState() MediaState {
 		CanGoPrevious:  canPrev,
 		CanPlay:        canPlay,
 		CanPause:       canPause,
+		CanSeek:        canSeek,
 		HasLyrics:      hasLyrics,
 		LyricsEnabled:  lyricsEnabled,
 		CurrentLyric:   currLyric,

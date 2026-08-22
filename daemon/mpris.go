@@ -50,6 +50,7 @@ type MPRISManager struct {
 	artist     string
 	album      string
 	artURL     string
+	trackID    string
 	durationUs int64
 	basePosUs  int64
 	baseTime   time.Time
@@ -60,6 +61,7 @@ type MPRISManager struct {
 	canPrev    bool
 	canPlay    bool
 	canPause   bool
+	canSeek    bool
 
 	onStateChanged func()
 }
@@ -185,7 +187,8 @@ func (m *MPRISManager) refreshAllProperties(obj dbus.BusObject) {
 	// (broadcasts, ticks, lyric updates) for the length of the call.
 	var status string
 	rate := 1.0
-	var canNext, canPrev, canPlay, canPause bool
+	var canNext, canPrev, canPlay, canPause, canSeek bool
+	var gotNext, gotPrev, gotPlay, gotPause, gotSeek bool
 	var meta trackMeta
 	haveMeta := false
 	var posUs int64
@@ -201,15 +204,23 @@ func (m *MPRISManager) refreshAllProperties(obj dbus.BusObject) {
 	}
 	if v, err := playerProperty(obj, "CanGoNext"); err == nil {
 		canNext, _ = v.Value().(bool)
+		gotNext = true
 	}
 	if v, err := playerProperty(obj, "CanGoPrevious"); err == nil {
 		canPrev, _ = v.Value().(bool)
+		gotPrev = true
 	}
 	if v, err := playerProperty(obj, "CanPlay"); err == nil {
 		canPlay, _ = v.Value().(bool)
+		gotPlay = true
 	}
 	if v, err := playerProperty(obj, "CanPause"); err == nil {
 		canPause, _ = v.Value().(bool)
+		gotPause = true
+	}
+	if v, err := playerProperty(obj, "CanSeek"); err == nil {
+		canSeek, _ = v.Value().(bool)
+		gotSeek = true
 	}
 	if v, err := playerProperty(obj, "Metadata"); err == nil {
 		meta = metadataFromVariant(v.Value())
@@ -226,13 +237,53 @@ func (m *MPRISManager) refreshAllProperties(obj dbus.BusObject) {
 		m.status = status
 	}
 	m.rate = rate
-	m.canNext, m.canPrev, m.canPlay, m.canPause = canNext, canPrev, canPlay, canPause
+	// Apply capability flags only from successful reads: a timed-out or
+	// hiccupped property fetch must not flip a working player's flags to
+	// false (clients hide seek controls off of canSeek).
+	if gotNext {
+		m.canNext = canNext
+	}
+	if gotPrev {
+		m.canPrev = canPrev
+	}
+	if gotPlay {
+		m.canPlay = canPlay
+	}
+	if gotPause {
+		m.canPause = canPause
+	}
+	if gotSeek {
+		m.canSeek = canSeek
+	}
 	if haveMeta {
-		m.title = meta.title
-		m.artist = meta.artist
-		m.album = meta.album
-		m.artURL = meta.artURL
-		m.durationUs = meta.durationUs
+		// Players sometimes re-emit metadata for the SAME track with optional
+		// fields dropped (Firefox loses mpris:length after a seek). Merge only
+		// present fields so duration/title never regress to zero; a genuine
+		// track change (different track id) applies wholesale.
+		if meta.trackID != "" && meta.trackID == m.trackID {
+			if meta.title != "" {
+				m.title = meta.title
+			}
+			if meta.artist != "" {
+				m.artist = meta.artist
+			}
+			if meta.album != "" {
+				m.album = meta.album
+			}
+			if meta.artURL != "" {
+				m.artURL = meta.artURL
+			}
+			if meta.durationUs > 0 {
+				m.durationUs = meta.durationUs
+			}
+		} else {
+			m.title = meta.title
+			m.artist = meta.artist
+			m.album = meta.album
+			m.artURL = meta.artURL
+			m.trackID = meta.trackID
+			m.durationUs = meta.durationUs
+		}
 	}
 	if havePos {
 		m.basePosUs = posUs
@@ -253,6 +304,7 @@ type trackMeta struct {
 	artist     string
 	album      string
 	artURL     string
+	trackID    string
 	durationUs int64
 }
 
@@ -284,6 +336,14 @@ func metadataFromVariant(metaVal interface{}) trackMeta {
 		tm.artURL, _ = val.Value().(string)
 	}
 
+	if val, found := metaMap["mpris:trackid"]; found {
+		switch v := val.Value().(type) {
+		case string:
+			tm.trackID = v
+		case dbus.ObjectPath:
+			tm.trackID = string(v)
+		}
+	}
 	if val, found := metaMap["mpris:length"]; found {
 		switch l := val.Value().(type) {
 		case int64:
@@ -385,17 +445,37 @@ func (m *MPRISManager) handlePropertiesChanged(sender string, changed map[string
 
 	if metaVal, ok := changed["Metadata"]; ok {
 		meta := metadataFromVariant(metaVal.Value())
-		m.title = meta.title
-		m.artist = meta.artist
-		m.album = meta.album
-		m.artURL = meta.artURL
-		m.durationUs = meta.durationUs
-		// Resync position on track change
-		m.basePosUs = 0
-		m.baseTime = time.Now()
+		// Same-track re-emission: merge, never regress to empty/zero (see
+		// refreshAllProperties). Genuine track change: apply wholesale and
+		// resync the position clock.
+		if meta.trackID != "" && meta.trackID == m.trackID {
+			if meta.title != "" {
+				m.title = meta.title
+			}
+			if meta.artist != "" {
+				m.artist = meta.artist
+			}
+			if meta.album != "" {
+				m.album = meta.album
+			}
+			if meta.artURL != "" {
+				m.artURL = meta.artURL
+			}
+			if meta.durationUs > 0 {
+				m.durationUs = meta.durationUs
+			}
+		} else {
+			m.title = meta.title
+			m.artist = meta.artist
+			m.album = meta.album
+			m.artURL = meta.artURL
+			m.trackID = meta.trackID
+			m.durationUs = meta.durationUs
+			m.basePosUs = 0
+			m.baseTime = time.Now()
+		}
 		stateModified = true
 	}
-
 	if rateVal, ok := changed["Rate"]; ok {
 		if r, ok := rateVal.Value().(float64); ok && r > 0 {
 			m.rate = r
@@ -418,6 +498,10 @@ func (m *MPRISManager) handlePropertiesChanged(sender string, changed map[string
 		m.canPause, _ = val.Value().(bool)
 		stateModified = true
 	}
+	if val, ok := changed["CanSeek"]; ok {
+		m.canSeek, _ = val.Value().(bool)
+		stateModified = true
+	}
 
 	m.mu.Unlock()
 
@@ -429,7 +513,11 @@ func (m *MPRISManager) handlePropertiesChanged(sender string, changed map[string
 		if active != "" {
 			obj := m.conn.Object(active, "/org/mpris/MediaPlayer2")
 			if posVal, err := playerProperty(obj, "Position"); err == nil {
-				if pos, ok := positionUsFromVariant(posVal.Value()); ok {
+				if pos, ok := positionUsFromVariant(posVal.Value()); ok && pos > 0 {
+					// Ignore zero samples: some players (Firefox) report
+					// Position=0 while paused or after seeks; anchoring to it
+					// would collapse the clock. Real restarts re-anchor via
+					// Seeked/metadata change instead.
 					m.mu.Lock()
 					m.basePosUs = pos
 					m.baseTime = time.Now()
@@ -478,6 +566,15 @@ func (m *MPRISManager) SyncPosition() int64 {
 	}
 	m.lastSyncAt = now
 	estUs := m.basePosUs + int64(float64(now.Sub(m.baseTime).Microseconds())*m.rate)
+	// Degraded players (Firefox after a seek-during-playback) report
+	// Position=0 continuously while audio actually advances. Folding those
+	// samples collapses the clock into a 0..1s sawtooth. A genuinely playing
+	// player cannot sit at exactly zero once the estimate is past two
+	// seconds, so free-run on interpolation until real samples return.
+	if status == "Playing" && sampleUs == 0 && estUs > 2*secondQuantumUs {
+		m.mu.Unlock()
+		return m.GetPositionMs()
+	}
 	if newBase, anchor := m.reconciler.reconcile(estUs, sampleUs, gapUs); anchor {
 		m.basePosUs = newBase
 		m.baseTime = now
@@ -555,4 +652,30 @@ func (m *MPRISManager) Previous() error {
 	}
 	obj := m.conn.Object(active, "/org/mpris/MediaPlayer2")
 	return obj.Call("org.mpris.MediaPlayer2.Player.Previous", 0).Err
+}
+
+// GetCanSeek reports whether the active player supports seeking
+func (m *MPRISManager) GetCanSeek() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.canSeek
+}
+
+// SeekTo positions the active player at an absolute offset in milliseconds.
+// Prefers SetPosition (needs the player's track id) and falls back to a
+// relative Seek for players that don't expose one.
+func (m *MPRISManager) SeekTo(positionMs int64) error {
+	m.mu.RLock()
+	active := m.activeBus
+	trackID := m.trackID
+	m.mu.RUnlock()
+	if active == "" {
+		return fmt.Errorf("no active player")
+	}
+	obj := m.conn.Object(active, "/org/mpris/MediaPlayer2")
+	posUs := positionMs * 1000
+	if trackID != "" && dbus.ObjectPath(trackID).IsValid() {
+		return obj.Call("org.mpris.MediaPlayer2.Player.SetPosition", 0, dbus.ObjectPath(trackID), posUs).Err
+	}
+	return obj.Call("org.mpris.MediaPlayer2.Player.Seek", 0, posUs-m.GetPositionMs()*1000).Err
 }

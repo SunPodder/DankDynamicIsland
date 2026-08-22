@@ -5,7 +5,7 @@ Apple inspired Dynamic Island for Dank Material Shell.
 ## Features
 - Clock pill on idle, follows the shell's clock format settings
 - Compact media pill with live audio visualizer and scrolling track label
-- Morphs into an expanded card on hover: player identity, track info, synced lyrics, transport controls
+- Morphs into an expanded card on hover: player identity, track info, synced lyrics, seekbar, transport controls
 - Synced lyrics from LRCLIB via the bundled helper daemon
 - Works without the daemon (falls back to MPRIS directly)
 
@@ -28,6 +28,7 @@ DankDynamicIsland/
 │   ├── ClockIsland.qml          # idle clock pill
 │   ├── TransportBar.qml         # Material 3 transport controls
 │   ├── MarqueeLabel.qml         # eliding/scrolling label
+│   ├── SeekBar.qml              # expanded-card seekbar with drag preview
 │   └── AudioVisualization.qml   # Cava-driven GPU bars
 ├── Shaders/                     # dynamic_bars.frag + prebuilt .qsb
 └── daemon/                      # Go helper: MPRIS + LRCLIB over WebSocket/UDS

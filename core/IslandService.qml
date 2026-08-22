@@ -42,6 +42,7 @@ Item {
             canPause: false,
             hasLyrics: false,
             lyricsEnabled: true,
+            canSeek: false,
             currentLyric: "",
             nextLyric: "",
             lyricIndex: -1,
@@ -113,6 +114,13 @@ Item {
         });
     }
 
+    function seek(positionMs) {
+        send({
+            action: "seek",
+            position_ms: Math.round(positionMs)
+        });
+    }
+
     function _syncLyricsPreference() {
         send({
             action: "set_lyrics_enabled",
@@ -141,6 +149,7 @@ Item {
             canGoPrevious: !!msg.can_go_previous,
             canPlay: !!msg.can_play,
             canPause: !!msg.can_pause,
+            canSeek: !!msg.can_seek,
             hasLyrics: !!msg.has_lyrics,
             lyricsEnabled: msg.lyrics_enabled !== false,
             currentLyric: msg.current_lyric || "",

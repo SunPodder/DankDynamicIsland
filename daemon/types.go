@@ -18,6 +18,7 @@ type MediaState struct {
 	CanGoPrevious  bool   `json:"can_go_previous"`
 	CanPlay        bool   `json:"can_play"`
 	CanPause       bool   `json:"can_pause"`
+	CanSeek        bool   `json:"can_seek"`
 	HasLyrics      bool   `json:"has_lyrics"`
 	LyricsEnabled  bool   `json:"lyrics_enabled"`
 	CurrentLyric   string `json:"current_lyric"`

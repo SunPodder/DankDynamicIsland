@@ -47,6 +47,21 @@ Item {
 
     readonly property bool canGoPrevious: daemonDriven ? service.media.canGoPrevious : (!!player && player.canGoPrevious)
 
+    readonly property bool canSeek: daemonDriven ? service.media.canSeek : (!!player && player.canSeek)
+
+    /// Playback position in seconds. Daemon mode streams it; fallback mode
+    /// re-anchors the (rarely pushed) MPRIS position via refreshPosition().
+    readonly property real position: daemonDriven ? (service.media.positionMs / 1000) : (player ? (player.position || 0) : 0)
+
+    /// Track duration in seconds; 0 for live streams.
+    readonly property real length: daemonDriven ? (service.media.durationMs / 1000) : MprisController.activePlayerStableLength
+
+    /// True while the seekbar holds a drag; pauses position polling.
+    property bool seeking: false
+
+    /// Expanded-card visibility gate: position only polls while the card is open.
+    property bool positionPollingEnabled: false
+
     /// "title • artist" for the compact pill; web sources fall back to identity.
     readonly property string trackLabel: {
         const subtitle = webSource ? (artist || identity) : artist;
@@ -76,5 +91,37 @@ Item {
             service.previous();
         else
             MprisController.previousOrRewind();
+    }
+
+    /// Re-reads the position from the active backend. Daemon mode requests a
+    /// fresh state push; fallback mode re-emits MPRIS positionChanged so
+    /// bindings re-evaluate (players rarely push Position on their own).
+    function refreshPosition() {
+        if (daemonDriven)
+            service.send({
+                    action: "get_state"
+                });
+        else if (player)
+            player.positionChanged();
+    }
+
+    function seek(seconds) {
+        const target = Math.max(0, seconds);
+        if (daemonDriven)
+            service.seek(target * 1000);
+        else if (player && player.canSeek)
+            player.position = Math.max(0.1, Math.min(target, Math.max(0.1, length * 0.99)));
+    }
+
+    onPositionPollingEnabledChanged: {
+        if (positionPollingEnabled)
+            refreshPosition();
+    }
+
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.positionPollingEnabled && root.playing && !root.seeking && root.length > 0
+        onTriggered: root.refreshPosition()
     }
 }

@@ -77,6 +77,17 @@ Item {
         }
     }
 
+    onMediaChanged: {
+        if (media)
+            media.positionPollingEnabled = Qt.binding(() => surface.expanded);
+    }
+
+    // Pin polling off so the expanded-binding never outlives the surface.
+    Component.onDestruction: {
+        if (media)
+            media.positionPollingEnabled = false;
+    }
+
     IslandSurface {
         id: surface
         anchors.top: parent.top
@@ -218,6 +229,14 @@ Item {
                     }
                 }
 
+                // Playback progress
+                SeekBar {
+                    width: parent.width
+                    media: root.media
+                    accentColor: root.accentColor
+                    foregroundColor: root.foregroundColor
+                    visible: root.media ? root.media.length > 0 : false
+                }
                 TransportBar {
                     anchors.horizontalCenter: parent.horizontalCenter
                     iconColor: root.foregroundColor
