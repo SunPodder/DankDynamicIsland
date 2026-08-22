@@ -11,7 +11,7 @@ DesktopPluginComponent {
     minWidth: 160
     minHeight: 48
     property real defaultWidth: 380
-    property real defaultHeight: 180
+    property real defaultHeight: 90
 
     readonly property bool inheritTheme: pluginData?.inheritTheme ?? false
     readonly property color islandBackgroundColor: inheritTheme ? Theme.surfaceContainerHigh : (pluginData?.backgroundColor || "#0b0b0b")
@@ -59,6 +59,10 @@ DesktopPluginComponent {
                 item.parentWidgetHeight = Qt.binding(() => root.widgetHeight);
             if ("islandService" in item)
                 item.islandService = islandService;
+            if ("requestResize" in item)
+                item.requestResize = root.requestResize;
+            if ("clearResize" in item)
+                item.clearResize = root.clearResize;
         }
     }
 }

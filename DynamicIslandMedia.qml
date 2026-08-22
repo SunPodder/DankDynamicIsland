@@ -17,6 +17,8 @@ Item {
     property real parentWidgetWidth: 380
     property real parentWidgetHeight: 180
     property var islandService: null
+    property var requestResize: null
+    property var clearResize: null
 
     // Fallback to MprisController if islandService is not yet injected
     readonly property MprisPlayer activePlayer: MprisController.activePlayer
@@ -90,6 +92,9 @@ Item {
     readonly property real expandedWidth: Math.max(expandedDims.width, 360)
     readonly property real expandedHeight: Math.max(expandedDims.height, expandedContent.implicitHeight + Theme.spacingM * 2)
 
+    readonly property real targetSurfaceWidth: Math.max(380, Math.ceil(expandedWidth))
+    readonly property real targetSurfaceHeight: Math.max(180, Math.ceil(expandedHeight))
+
     property real animatedCompactWidth: compactWidth
     Behavior on animatedCompactWidth {
         NumberAnimation {
@@ -114,6 +119,7 @@ Item {
     function expandIsland() {
         if (!isPlaying)
             return;
+        root.requestResize(root.targetSurfaceWidth, root.targetSurfaceHeight);
         isExpanded = true;
         collapseAnim.stop();
         expandAnim.restart();
@@ -153,6 +159,15 @@ Item {
         to: 0.0
         duration: 250
         easing.type: Easing.OutCubic
+        onFinished: {
+            if (!root.isExpanded) {
+                root.clearResize();
+            }
+        }
+    }
+
+    Component.onDestruction: {
+        root.clearResize();
     }
 
     // Dynamic Island Surface
