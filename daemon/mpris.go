@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -9,6 +10,34 @@ import (
 
 	"github.com/godbus/dbus/v5"
 )
+
+// dbusCallTimeout bounds every player property round trip. godbus's default
+// timeout is 25s; a throttled or hung player (e.g. a backgrounded Firefox
+// tab) must never stall the daemon for that long.
+const dbusCallTimeout = 500 * time.Millisecond
+
+// property fetches one D-Bus property with a bounded timeout.
+func property(obj dbus.BusObject, iface, name string) (dbus.Variant, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbusCallTimeout)
+	defer cancel()
+	call := obj.CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0, iface, name)
+	if call.Err != nil {
+		return dbus.Variant{}, call.Err
+	}
+	if len(call.Body) != 1 {
+		return dbus.Variant{}, fmt.Errorf("unexpected reply body for %s", name)
+	}
+	v, ok := call.Body[0].(dbus.Variant)
+	if !ok {
+		return dbus.Variant{}, fmt.Errorf("unexpected reply type for %s", name)
+	}
+	return v, nil
+}
+
+// playerProperty fetches one org.mpris.MediaPlayer2.Player property.
+func playerProperty(obj dbus.BusObject, name string) (dbus.Variant, error) {
+	return property(obj, "org.mpris.MediaPlayer2.Player", name)
+}
 
 // MPRISManager monitors Linux media players via D-Bus
 type MPRISManager struct {
@@ -25,6 +54,8 @@ type MPRISManager struct {
 	basePosUs  int64
 	baseTime   time.Time
 	rate       float64
+	reconciler positionReconciler
+	lastSyncAt time.Time
 	canNext    bool
 	canPrev    bool
 	canPlay    bool
@@ -91,8 +122,7 @@ func (m *MPRISManager) ScanPlayers() {
 		if strings.HasPrefix(name, "org.mpris.MediaPlayer2.") {
 			// Check if this player is playing
 			obj := m.conn.Object(name, "/org/mpris/MediaPlayer2")
-			statusVariant, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.PlaybackStatus")
-			if err == nil {
+			if statusVariant, err := playerProperty(obj, "PlaybackStatus"); err == nil {
 				status, _ := statusVariant.Value().(string)
 				if status == "Playing" {
 					bestPlayer = name
@@ -132,7 +162,7 @@ func (m *MPRISManager) SwitchToPlayer(busName string) {
 	obj := m.conn.Object(busName, "/org/mpris/MediaPlayer2")
 
 	// Get player identity
-	identityVariant, err := obj.GetProperty("org.mpris.MediaPlayer2.Identity")
+	identityVariant, err := property(obj, "org.mpris.MediaPlayer2", "Identity")
 	var identity string
 	if err == nil {
 		identity, _ = identityVariant.Value().(string)
@@ -150,106 +180,120 @@ func (m *MPRISManager) SwitchToPlayer(busName string) {
 }
 
 func (m *MPRISManager) refreshAllProperties(obj dbus.BusObject) {
+	// Gather everything BEFORE taking the lock: D-Bus round trips must never
+	// happen while holding m.mu, or a hung player freezes every reader
+	// (broadcasts, ticks, lyric updates) for the length of the call.
+	var status string
+	rate := 1.0
+	var canNext, canPrev, canPlay, canPause bool
+	var meta trackMeta
+	haveMeta := false
+	var posUs int64
+	havePos := false
+
+	if v, err := playerProperty(obj, "PlaybackStatus"); err == nil {
+		status, _ = v.Value().(string)
+	}
+	if v, err := playerProperty(obj, "Rate"); err == nil {
+		if r, ok := v.Value().(float64); ok && r > 0 {
+			rate = r
+		}
+	}
+	if v, err := playerProperty(obj, "CanGoNext"); err == nil {
+		canNext, _ = v.Value().(bool)
+	}
+	if v, err := playerProperty(obj, "CanGoPrevious"); err == nil {
+		canPrev, _ = v.Value().(bool)
+	}
+	if v, err := playerProperty(obj, "CanPlay"); err == nil {
+		canPlay, _ = v.Value().(bool)
+	}
+	if v, err := playerProperty(obj, "CanPause"); err == nil {
+		canPause, _ = v.Value().(bool)
+	}
+	if v, err := playerProperty(obj, "Metadata"); err == nil {
+		meta = metadataFromVariant(v.Value())
+		haveMeta = true
+	}
+	if v, err := playerProperty(obj, "Position"); err == nil {
+		if p, ok := positionUsFromVariant(v.Value()); ok {
+			posUs, havePos = p, true
+		}
+	}
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// PlaybackStatus
-	if val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.PlaybackStatus"); err == nil {
-		if status, ok := val.Value().(string); ok {
-			m.status = status
-		}
+	if status != "" {
+		m.status = status
 	}
-
-	// Rate
-	if val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.Rate"); err == nil {
-		if rate, ok := val.Value().(float64); ok && rate > 0 {
-			m.rate = rate
-		}
+	m.rate = rate
+	m.canNext, m.canPrev, m.canPlay, m.canPause = canNext, canPrev, canPlay, canPause
+	if haveMeta {
+		m.title = meta.title
+		m.artist = meta.artist
+		m.album = meta.album
+		m.artURL = meta.artURL
+		m.durationUs = meta.durationUs
 	}
-
-	// CanGoNext / CanGoPrevious / CanPlay / CanPause
-	if val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.CanGoNext"); err == nil {
-		m.canNext, _ = val.Value().(bool)
-	}
-	if val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.CanGoPrevious"); err == nil {
-		m.canPrev, _ = val.Value().(bool)
-	}
-	if val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.CanPlay"); err == nil {
-		m.canPlay, _ = val.Value().(bool)
-	}
-	if val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.CanPause"); err == nil {
-		m.canPause, _ = val.Value().(bool)
-	}
-
-	// Metadata
-	if val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.Metadata"); err == nil {
-		m.parseMetadata(val.Value())
-	}
-
-	// Position
-	if val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.Position"); err == nil {
-		if pos, ok := val.Value().(int64); ok {
-			m.basePosUs = pos
-			m.baseTime = time.Now()
-		}
-	} else {
-		m.basePosUs = 0
+	if havePos {
+		m.basePosUs = posUs
 		m.baseTime = time.Now()
 	}
+	// On a failed Position fetch keep the previous base: with bounded
+	// timeouts a transient blip must not restart lyrics from the top.
+	m.mu.Unlock()
 
 	if m.onStateChanged != nil {
 		go m.onStateChanged()
 	}
 }
 
-func (m *MPRISManager) parseMetadata(metaVal interface{}) {
+// trackMeta is the parsed subset of MPRIS Metadata the daemon uses.
+type trackMeta struct {
+	title      string
+	artist     string
+	album      string
+	artURL     string
+	durationUs int64
+}
+
+func metadataFromVariant(metaVal interface{}) trackMeta {
+	var tm trackMeta
 	metaMap, ok := metaVal.(map[string]dbus.Variant)
 	if !ok {
-		return
+		return tm
 	}
 
 	if val, found := metaMap["xesam:title"]; found {
-		m.title, _ = val.Value().(string)
-	} else {
-		m.title = ""
+		tm.title, _ = val.Value().(string)
 	}
 
 	if val, found := metaMap["xesam:artist"]; found {
 		switch v := val.Value().(type) {
 		case []string:
-			m.artist = strings.Join(v, ", ")
+			tm.artist = strings.Join(v, ", ")
 		case string:
-			m.artist = v
-		default:
-			m.artist = ""
+			tm.artist = v
 		}
-	} else {
-		m.artist = ""
 	}
 
 	if val, found := metaMap["xesam:album"]; found {
-		m.album, _ = val.Value().(string)
-	} else {
-		m.album = ""
+		tm.album, _ = val.Value().(string)
 	}
 
 	if val, found := metaMap["mpris:artUrl"]; found {
-		m.artURL, _ = val.Value().(string)
-	} else {
-		m.artURL = ""
+		tm.artURL, _ = val.Value().(string)
 	}
 
 	if val, found := metaMap["mpris:length"]; found {
-		if l, ok := val.Value().(int64); ok {
-			m.durationUs = l
-		} else if l, ok := val.Value().(uint64); ok {
-			m.durationUs = int64(l)
-		} else {
-			m.durationUs = 0
+		switch l := val.Value().(type) {
+		case int64:
+			tm.durationUs = l
+		case uint64:
+			tm.durationUs = int64(l)
 		}
-	} else {
-		m.durationUs = 0
 	}
+
+	return tm
 }
 
 func (m *MPRISManager) listenSignals() {
@@ -304,20 +348,7 @@ func (m *MPRISManager) listenSignals() {
 
 		case "org.mpris.MediaPlayer2.Player.Seeked":
 			if len(sig.Body) >= 1 {
-				var posUs int64
-				switch v := sig.Body[0].(type) {
-				case int64:
-					posUs = v
-				case uint64:
-					posUs = int64(v)
-				case int32:
-					posUs = int64(v)
-				case int:
-					posUs = int64(v)
-				case float64:
-					posUs = int64(v)
-				}
-
+				posUs, _ := positionUsFromVariant(sig.Body[0])
 				m.mu.Lock()
 				m.basePosUs = posUs
 				m.baseTime = time.Now()
@@ -353,7 +384,12 @@ func (m *MPRISManager) handlePropertiesChanged(sender string, changed map[string
 	}
 
 	if metaVal, ok := changed["Metadata"]; ok {
-		m.parseMetadata(metaVal.Value())
+		meta := metadataFromVariant(metaVal.Value())
+		m.title = meta.title
+		m.artist = meta.artist
+		m.album = meta.album
+		m.artURL = meta.artURL
+		m.durationUs = meta.durationUs
 		// Resync position on track change
 		m.basePosUs = 0
 		m.baseTime = time.Now()
@@ -392,8 +428,8 @@ func (m *MPRISManager) handlePropertiesChanged(sender string, changed map[string
 		m.mu.RUnlock()
 		if active != "" {
 			obj := m.conn.Object(active, "/org/mpris/MediaPlayer2")
-			if posVal, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.Position"); err == nil {
-				if pos, ok := posVal.Value().(int64); ok {
+			if posVal, err := playerProperty(obj, "Position"); err == nil {
+				if pos, ok := positionUsFromVariant(posVal.Value()); ok {
 					m.mu.Lock()
 					m.basePosUs = pos
 					m.baseTime = time.Now()
@@ -407,39 +443,46 @@ func (m *MPRISManager) handlePropertiesChanged(sender string, changed map[string
 	}
 }
 
-// SyncPosition queries the actual current playback position from the active MPRIS player via D-Bus
+// SyncPosition samples the active player's MPRIS Position and folds it into
+// the interpolation clock via positionReconciler, which re-anchors only on
+// informative samples (see position.go). Players like Firefox report Position
+// quantized to whole seconds; anchoring to every raw sample would drag the
+// lyric clock up to a second behind playback.
 func (m *MPRISManager) SyncPosition() int64 {
 	m.mu.RLock()
 	active := m.activeBus
+	status := m.status
 	m.mu.RUnlock()
 
-	if active == "" {
-		return 0
+	if active == "" || status != "Playing" {
+		// Nothing advancing; pause/resume transitions requery Position via
+		// handlePropertiesChanged, so there is nothing to reconcile.
+		return m.GetPositionMs()
 	}
 
 	obj := m.conn.Object(active, "/org/mpris/MediaPlayer2")
-	val, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.Position")
-	if err == nil {
-		var posUs int64
-		switch v := val.Value().(type) {
-		case int64:
-			posUs = v
-		case uint64:
-			posUs = int64(v)
-		case int32:
-			posUs = int64(v)
-		case int:
-			posUs = int64(v)
-		case float64:
-			posUs = int64(v)
-		}
-
-		m.mu.Lock()
-		m.basePosUs = posUs
-		m.baseTime = time.Now()
-		m.mu.Unlock()
-		return posUs / 1000
+	val, err := playerProperty(obj, "Position")
+	if err != nil {
+		return m.GetPositionMs()
 	}
+	sampleUs, ok := positionUsFromVariant(val.Value())
+	if !ok {
+		return m.GetPositionMs()
+	}
+
+	now := time.Now()
+	m.mu.Lock()
+	gapUs := int64(dbusCallTimeout.Microseconds())
+	if !m.lastSyncAt.IsZero() {
+		gapUs = now.Sub(m.lastSyncAt).Microseconds()
+	}
+	m.lastSyncAt = now
+	estUs := m.basePosUs + int64(float64(now.Sub(m.baseTime).Microseconds())*m.rate)
+	if newBase, anchor := m.reconciler.reconcile(estUs, sampleUs, gapUs); anchor {
+		m.basePosUs = newBase
+		m.baseTime = now
+	}
+	m.mu.Unlock()
 
 	return m.GetPositionMs()
 }

@@ -144,8 +144,10 @@ func (a *DaemonApp) runLoop() {
 			return
 		case <-ticker.C:
 			tickCount++
-			// Sync exact playing position from D-Bus every ~240ms (4 ticks) to immediately capture seeking
-			if tickCount%4 == 0 {
+			// Sample MPRIS Position every ~120ms (2 ticks). Frequent sampling
+			// lets positionReconciler re-anchor second-quantized reporters
+			// (Firefox) within one poll interval of each 1s step.
+			if tickCount%2 == 0 {
 				a.mpris.SyncPosition()
 			}
 			a.tick()
