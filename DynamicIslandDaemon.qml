@@ -1,12 +1,17 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import Quickshell
 import Quickshell.Io
-import qs.Common
-import qs.Services
 import qs.Modules.Plugins
 
+/**
+ * Daemon surface: supervises the island helper binary (daemon/).
+ *
+ * The binary is built on first run (requires the Go toolchain) and restarted
+ * when it exits non-zero. Media/lyrics preferences are pushed by the desktop
+ * surface over its own connection, so this component stays a pure process
+ * supervisor.
+ */
 PluginComponent {
     id: root
 
@@ -14,7 +19,6 @@ PluginComponent {
 
     readonly property string daemonDir: Qt.resolvedUrl("daemon").toString().replace(/^file:\/\//, "")
     readonly property string daemonBin: daemonDir + "/bin/daemon"
-    readonly property bool enableLyricsSetting: pluginData?.enableLyrics ?? true
 
     Process {
         id: daemonProc
@@ -26,22 +30,16 @@ PluginComponent {
         running: true
 
         stdout: SplitParser {
-            onRead: line => {
-                if (line.includes("[Daemon]") || line.includes("[Server]") || line.includes("[MPRIS]")) {
-                    console.log(line.trim());
-                }
-            }
+            onRead: line => console.log(line.trim())
         }
 
         stderr: SplitParser {
-            onRead: line => {
-                console.warn("[DynamicIslandDaemon stderr]", line.trim());
-            }
+            onRead: line => console.warn("[IslandDaemon]", line.trim())
         }
 
         onExited: exitCode => {
-            console.log("[DynamicIslandDaemon] Process exited with code:", exitCode);
             if (exitCode !== 0) {
+                console.warn("[IslandDaemon] Exited with code", exitCode, "- restarting in 3s");
                 restartTimer.restart();
             }
         }
@@ -50,34 +48,9 @@ PluginComponent {
     Timer {
         id: restartTimer
         interval: 3000
-        repeat: false
         onTriggered: {
-            if (!daemonProc.running) {
-                console.log("[DynamicIslandDaemon] Restarting daemon process...");
+            if (!daemonProc.running)
                 daemonProc.running = true;
-            }
         }
-    }
-
-    DynamicIslandService {
-        id: islandService
-    }
-
-    onEnableLyricsSettingChanged: {
-        islandService.setLyricsEnabled(root.enableLyricsSetting);
-    }
-
-    Connections {
-        target: pluginService
-        function onPluginDataChanged(changedId) {
-            if (changedId === pluginId) {
-                const lyricsVal = pluginService.loadPluginData(pluginId, "enableLyrics", true);
-                islandService.setLyricsEnabled(lyricsVal);
-            }
-        }
-    }
-
-    Component.onCompleted: {
-        console.log("[DynamicIslandDaemon] Daemon component loaded. Binary path:", root.daemonBin);
     }
 }

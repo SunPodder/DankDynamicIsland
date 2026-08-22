@@ -1,22 +1,30 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
-import Quickshell.Services.Mpris
 import qs.Common
 import qs.Services
 
+/**
+ * GPU-rendered audio bars driven by CavaService.
+ *
+ * Playback state is injected via `playing` so the visualization follows the
+ * island's normalized media model instead of probing MprisController itself.
+ * The Cava process is only kept alive while bars are actually visible.
+ */
 Item {
     id: root
 
-    property color color: Theme.primary
+    property color barColor: Theme.primary
     property int barCount: 15
     property real barGap: 1.5
-    readonly property MprisPlayer activePlayer: MprisController.activePlayer
-    readonly property bool isPlaying: activePlayer !== null && activePlayer.playbackState === MprisPlaybackState.Playing
-    readonly property bool live: visible && isPlaying
+    property bool playing: false
+
+    readonly property bool live: visible && playing
 
     implicitWidth: Math.max(64, barCount * 4)
     implicitHeight: Theme.iconSize
 
-    readonly property real maxBarHeight: Theme.iconSize
+    readonly property real maxBarHeight: height
     readonly property real minBarHeight: 3
 
     onLiveChanged: {
@@ -26,6 +34,7 @@ Item {
         }
     }
 
+    // Ref-counts CavaService so the cava process runs only while visible.
     Loader {
         active: root.live
         sourceComponent: Component {
@@ -35,6 +44,7 @@ Item {
         }
     }
 
+    // Cava missing: synthesize gentle motion so the pill still feels alive.
     Timer {
         running: !CavaService.cavaAvailable && root.live
         interval: 500
@@ -47,6 +57,7 @@ Item {
     Connections {
         target: CavaService
         enabled: root.live
+
         function onValuesChanged() {
             const v = CavaService.values;
             if (v.length < 6)
@@ -77,8 +88,8 @@ Item {
         property real barGap: root.barGap
         property vector4d bandsA: Qt.vector4d(0, 0, 0, 0)
         property vector2d bandsB: Qt.vector2d(0, 0)
-        property vector4d fillColor: Qt.vector4d(root.color.r, root.color.g, root.color.b, root.color.a)
+        property vector4d fillColor: Qt.vector4d(root.barColor.r, root.barColor.g, root.barColor.b, root.barColor.a)
 
-        fragmentShader: Qt.resolvedUrl("Shaders/qsb/dynamic_bars.frag.qsb")
+        fragmentShader: Qt.resolvedUrl("../Shaders/qsb/dynamic_bars.frag.qsb")
     }
 }

@@ -2,7 +2,7 @@
     "id": "DankDynamicIsland",
     "name": "Dynamic Island",
     "description": "Dynamic Island with synced lyrics for Dank Material Shell",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "author": "SunPodder",
     "type": "composite",
     "capabilities": ["desktop-widget", "daemon"],

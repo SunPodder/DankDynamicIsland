@@ -3,6 +3,11 @@ import qs.Common
 import qs.Modules.Plugins
 import qs.Widgets
 
+/**
+ * Global plugin settings. Keys here feed core/IslandConfig.js resolution:
+ * every desktop widget instance inherits these values unless it overrides a
+ * key in its own instance config.
+ */
 PluginSettings {
     id: root
     pluginId: "DankDynamicIsland"
@@ -17,17 +22,10 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Configure colors and visualization bar counts for compact and extended components."
+        text: "Appearance, visualizer and lyrics. All desktop widget instances inherit these settings; per-instance overrides still take precedence."
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
-    }
-
-    ToggleSetting {
-        settingKey: "enableLyrics"
-        label: "Real-time Synced Lyrics"
-        description: "Fetch and display synchronized lyrics from LRCLIB when media is playing"
-        defaultValue: true
     }
 
     ToggleSetting {
@@ -40,7 +38,7 @@ PluginSettings {
     ColorSetting {
         settingKey: "backgroundColor"
         label: "Background Color"
-        description: "Custom background color for compact and extended components"
+        description: "Custom background color for compact and expanded components"
         defaultValue: "#0b0b0b"
     }
 
@@ -49,6 +47,13 @@ PluginSettings {
         label: "Foreground Color"
         description: "Custom foreground/text color for compact and extended components"
         defaultValue: "#f5f5f5"
+    }
+
+    ToggleSetting {
+        settingKey: "enableLyrics"
+        label: "Real-time Synced Lyrics"
+        description: "Fetch and display synchronized lyrics from LRCLIB when media is playing"
+        defaultValue: true
     }
 
     SliderSetting {
